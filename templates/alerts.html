@@ -1,0 +1,352 @@
+{% extends "base.html" %}
+
+{% block title %}Alerts - Mini SIEM{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col">
+        <h2><i class="bi bi-exclamation-triangle"></i> Security Alerts</h2>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h5><i class="bi bi-funnel"></i> Filters</h5>
+    </div>
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label">Severity</label>
+                <select class="form-select" id="filterSeverity">
+                    <option value="">All</option>
+                    <option value="critical">Critical</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Status</label>
+                <select class="form-select" id="filterStatus">
+                    <option value="">All</option>
+                    <option value="active">Active</option>
+                    <option value="investigating">Investigating</option>
+                    <option value="resolved">Resolved</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Alert Type</label>
+                <input type="text" class="form-control" id="filterAlertType" placeholder="Enter alert type">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">&nbsp;</label>
+                <button class="btn btn-primary w-100" onclick="applyFilters()">
+                    <i class="bi bi-search"></i> Search
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Alerts Table -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5><i class="bi bi-list"></i> Alerts (<span id="totalCount">0</span>)</h5>
+        <button class="btn btn-sm btn-primary" onclick="refreshAlerts()">
+            <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Timestamp</th>
+                        <th>Alert Type</th>
+                        <th>Severity</th>
+                        <th>Status</th>
+                        <th>Source IP</th>
+                        <th>Username</th>
+                        <th>MITRE ATT&CK</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="alertsTable">
+                    <tr>
+                        <td colspan="9" class="text-center">Loading...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Alert Detail Modal -->
+<div class="modal fade" id="alertDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Alert Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="alertDetailContent">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-success" id="resolveBtn" onclick="resolveAlert()">
+                    <i class="bi bi-check-circle"></i> Resolve
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Resolve Alert Modal -->
+<div class="modal fade" id="resolveModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Resolve Alert</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Resolution Notes</label>
+                    <textarea class="form-control" id="resolutionNotes" rows="4" placeholder="Enter resolution notes..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-success" onclick="submitResolve()">Resolve</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let currentAlertId = null;
+
+async function loadAlerts() {
+    try {
+        const params = new URLSearchParams({
+            limit: 100
+        });
+        
+        const severity = document.getElementById('filterSeverity').value;
+        const status = document.getElementById('filterStatus').value;
+        const alertType = document.getElementById('filterAlertType').value;
+        
+        if (severity) params.append('severity', severity);
+        if (status) params.append('status', status);
+        if (alertType) params.append('alert_type', alertType);
+        
+        const response = await fetch(`/api/alerts?${params}`, {
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+        });
+        
+        if (!response.ok) {
+            if (response.status === 401) {
+                window.location.href = '/';
+                return;
+            }
+            throw new Error('Failed to load alerts');
+        }
+        
+        const data = await response.json();
+        
+        document.getElementById('totalCount').textContent = data.total.toLocaleString();
+        displayAlerts(data.alerts);
+        
+    } catch (error) {
+        console.error('Error loading alerts:', error);
+    }
+}
+
+function displayAlerts(alerts) {
+    const tbody = document.getElementById('alertsTable');
+    
+    if (alerts.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center">No alerts found</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = alerts.map(alert => {
+        const severityBadge = getSeverityBadge(alert.severity);
+        const statusBadge = getStatusBadge(alert.status);
+        const timestamp = new Date(alert.timestamp).toLocaleString();
+        
+        return `
+            <tr>
+                <td>${alert.id}</td>
+                <td><small>${timestamp}</small></td>
+                <td><strong>${alert.alert_type}</strong></td>
+                <td>${severityBadge}</td>
+                <td>${statusBadge}</td>
+                <td>${alert.source_ip || '-'}</td>
+                <td>${alert.username || '-'}</td>
+                <td>${alert.mitre_attack_id ? `<span class="badge bg-dark">${alert.mitre_attack_id}</span>` : '-'}</td>
+                <td>
+                    <button class="btn btn-sm btn-info" onclick='viewAlertDetail(${JSON.stringify(alert)})'>
+                        <i class="bi bi-eye"></i>
+                    </button>
+                    ${alert.status !== 'resolved' ? `
+                        <button class="btn btn-sm btn-success" onclick='showResolveModal(${alert.id})'>
+                            <i class="bi bi-check"></i>
+                        </button>
+                    ` : ''}
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function getSeverityBadge(severity) {
+    const badges = {
+        'critical': '<span class="badge bg-danger">Critical</span>',
+        'high': '<span class="badge bg-warning">High</span>',
+        'medium': '<span class="badge bg-info">Medium</span>',
+        'low': '<span class="badge bg-secondary">Low</span>'
+    };
+    return badges[severity] || '<span class="badge bg-secondary">Unknown</span>';
+}
+
+function getStatusBadge(status) {
+    const badges = {
+        'active': '<span class="badge bg-danger">Active</span>',
+        'investigating': '<span class="badge bg-warning">Investigating</span>',
+        'resolved': '<span class="badge bg-success">Resolved</span>'
+    };
+    return badges[status] || '<span class="badge bg-secondary">Unknown</span>';
+}
+
+function viewAlertDetail(alert) {
+    currentAlertId = alert.id;
+    const content = document.getElementById('alertDetailContent');
+    
+    content.innerHTML = `
+        <table class="table table-bordered">
+            <tr>
+                <th width="30%">Alert ID</th>
+                <td>${alert.id}</td>
+            </tr>
+            <tr>
+                <th>Alert Type</th>
+                <td><strong>${alert.alert_type}</strong></td>
+            </tr>
+            <tr>
+                <th>Severity</th>
+                <td>${getSeverityBadge(alert.severity)}</td>
+            </tr>
+            <tr>
+                <th>Status</th>
+                <td>${getStatusBadge(alert.status)}</td>
+            </tr>
+            <tr>
+                <th>Timestamp</th>
+                <td>${new Date(alert.timestamp).toLocaleString()}</td>
+            </tr>
+            <tr>
+                <th>Description</th>
+                <td>${alert.description}</td>
+            </tr>
+            <tr>
+                <th>Source IP</th>
+                <td>${alert.source_ip || '-'}</td>
+            </tr>
+            <tr>
+                <th>Username</th>
+                <td>${alert.username || '-'}</td>
+            </tr>
+            <tr>
+                <th>Detection Rule</th>
+                <td>${alert.detection_rule || '-'}</td>
+            </tr>
+            <tr>
+                <th>MITRE ATT&CK ID</th>
+                <td>${alert.mitre_attack_id ? `<span class="badge bg-dark">${alert.mitre_attack_id}</span>` : '-'}</td>
+            </tr>
+            ${alert.resolved_at ? `
+            <tr>
+                <th>Resolved At</th>
+                <td>${new Date(alert.resolved_at).toLocaleString()}</td>
+            </tr>
+            <tr>
+                <th>Resolved By</th>
+                <td>${alert.resolved_by}</td>
+            </tr>
+            <tr>
+                <th>Resolution Notes</th>
+                <td>${alert.resolution_notes || '-'}</td>
+            </tr>
+            ` : ''}
+        </table>
+    `;
+    
+    // Hide resolve button if already resolved
+    document.getElementById('resolveBtn').style.display = alert.status === 'resolved' ? 'none' : 'block';
+    
+    const modal = new bootstrap.Modal(document.getElementById('alertDetailModal'));
+    modal.show();
+}
+
+function showResolveModal(alertId) {
+    currentAlertId = alertId;
+    const modal = new bootstrap.Modal(document.getElementById('resolveModal'));
+    modal.show();
+}
+
+function resolveAlert() {
+    bootstrap.Modal.getInstance(document.getElementById('alertDetailModal')).hide();
+    showResolveModal(currentAlertId);
+}
+
+async function submitResolve() {
+    const notes = document.getElementById('resolutionNotes').value;
+    
+    try {
+        const response = await fetch(`/api/alerts/${currentAlertId}/resolve`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            },
+            body: JSON.stringify({ notes })
+        });
+        
+        if (response.ok) {
+            alert('Alert resolved successfully');
+            bootstrap.Modal.getInstance(document.getElementById('resolveModal')).hide();
+            document.getElementById('resolutionNotes').value = '';
+            loadAlerts();
+        } else {
+            alert('Failed to resolve alert');
+        }
+    } catch (error) {
+        console.error('Error resolving alert:', error);
+        alert('An error occurred');
+    }
+}
+
+function applyFilters() {
+    loadAlerts();
+}
+
+function refreshAlerts() {
+    loadAlerts();
+}
+
+// Load alerts on page load
+document.addEventListener('DOMContentLoaded', () => {
+    loadAlerts();
+    
+    // Refresh every 30 seconds
+    setInterval(loadAlerts, 30000);
+});
+</script>
+{% endblock %}

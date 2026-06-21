@@ -1,0 +1,366 @@
+{% extends "base.html" %}
+
+{% block title %}Reports - Mini SIEM{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col">
+        <h2><i class="bi bi-file-earmark-bar-graph"></i> Security Reports</h2>
+    </div>
+</div>
+
+<!-- Report Generation -->
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body text-center">
+                <i class="bi bi-calendar-day" style="font-size: 3rem; color: #0d6efd;"></i>
+                <h5 class="mt-3">Daily Report</h5>
+                <p class="text-muted">Generate a report for today's security events</p>
+                <button class="btn btn-primary" onclick="generateReport('daily')">
+                    <i class="bi bi-file-earmark-text"></i> Generate
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body text-center">
+                <i class="bi bi-calendar-week" style="font-size: 3rem; color: #198754;"></i>
+                <h5 class="mt-3">Weekly Report</h5>
+                <p class="text-muted">Generate a report for the last 7 days</p>
+                <button class="btn btn-success" onclick="generateReport('weekly')">
+                    <i class="bi bi-file-earmark-text"></i> Generate
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body text-center">
+                <i class="bi bi-bug" style="font-size: 3rem; color: #dc3545;"></i>
+                <h5 class="mt-3">Incident Report</h5>
+                <p class="text-muted">Generate a report for a specific incident</p>
+                <button class="btn btn-danger" onclick="showIncidentReportModal()">
+                    <i class="bi bi-file-earmark-text"></i> Generate
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Report Display -->
+<div class="card" id="reportCard" style="display: none;">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5><i class="bi bi-file-text"></i> <span id="reportTitle">Report</span></h5>
+        <div>
+            <button class="btn btn-sm btn-success" onclick="exportReport('csv')">
+                <i class="bi bi-file-earmark-spreadsheet"></i> Export CSV
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="exportReport('pdf')">
+                <i class="bi bi-file-earmark-pdf"></i> Export PDF
+            </button>
+        </div>
+    </div>
+    <div class="card-body">
+        <div id="reportContent"></div>
+    </div>
+</div>
+
+<!-- Incident Report Modal -->
+<div class="modal fade" id="incidentReportModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Generate Incident Report</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Incident ID</label>
+                    <input type="number" class="form-control" id="incidentId" placeholder="Enter incident ID">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="generateIncidentReport()">Generate</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let currentReportType = null;
+let currentReportData = null;
+
+async function generateReport(type) {
+    currentReportType = type;
+    
+    try {
+        const response = await fetch(`/api/reports/${type}`, {
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to generate report');
+        }
+        
+        currentReportData = await response.json();
+        displayReport(currentReportData);
+        
+    } catch (error) {
+        console.error('Error generating report:', error);
+        alert('Failed to generate report');
+    }
+}
+
+async function generateIncidentReport() {
+    const incidentId = document.getElementById('incidentId').value;
+    
+    if (!incidentId) {
+        alert('Please enter an incident ID');
+        return;
+    }
+    
+    currentReportType = 'incident';
+    
+    try {
+        const response = await fetch(`/api/reports/incident/${incidentId}`, {
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to generate report');
+        }
+        
+        currentReportData = await response.json();
+        
+        if (currentReportData.error) {
+            alert(currentReportData.error);
+            return;
+        }
+        
+        displayReport(currentReportData);
+        bootstrap.Modal.getInstance(document.getElementById('incidentReportModal')).hide();
+        
+    } catch (error) {
+        console.error('Error generating report:', error);
+        alert('Failed to generate report');
+    }
+}
+
+function displayReport(data) {
+    document.getElementById('reportCard').style.display = 'block';
+    document.getElementById('reportTitle').textContent = data.report_type;
+    
+    const content = document.getElementById('reportContent');
+    
+    let html = `
+        <div class="mb-4">
+            <h6>Report Information</h6>
+            <table class="table table-bordered">
+                <tr>
+                    <th width="30%">Report Type</th>
+                    <td>${data.report_type}</td>
+                </tr>
+                <tr>
+                    <th>Generated At</th>
+                    <td>${new Date(data.generated_at).toLocaleString()}</td>
+                </tr>
+    `;
+    
+    if (data.period) {
+        html += `
+                <tr>
+                    <th>Period</th>
+                    <td>${new Date(data.period.start).toLocaleDateString()} - ${new Date(data.period.end).toLocaleDateString()}</td>
+                </tr>
+        `;
+    }
+    
+    html += `</table></div>`;
+    
+    // Summary
+    if (data.summary) {
+        html += `
+            <div class="mb-4">
+                <h6>Summary</h6>
+                <div class="row">
+        `;
+        
+        for (const [key, value] of Object.entries(data.summary)) {
+            html += `
+                    <div class="col-md-3 mb-3">
+                        <div class="card">
+                            <div class="card-body text-center">
+                                <h3>${value}</h3>
+                                <p class="text-muted mb-0">${key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</p>
+                            </div>
+                        </div>
+                    </div>
+            `;
+        }
+        
+        html += `
+                </div>
+            </div>
+        `;
+    }
+    
+    // Top Attacking IPs
+    if (data.top_attacking_ips && data.top_attacking_ips.length > 0) {
+        html += `
+            <div class="mb-4">
+                <h6>Top Attacking IPs</h6>
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>IP Address</th>
+                            <th>Attack Count</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+        
+        data.top_attacking_ips.forEach(item => {
+            html += `
+                        <tr>
+                            <td>${item.ip}</td>
+                            <td><span class="badge bg-danger">${item.count}</span></td>
+                        </tr>
+            `;
+        });
+        
+        html += `
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+    
+    // Top Targeted Users
+    if (data.top_targeted_users && data.top_targeted_users.length > 0) {
+        html += `
+            <div class="mb-4">
+                <h6>Top Targeted Users</h6>
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Username</th>
+                            <th>Failed Attempts</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+        
+        data.top_targeted_users.forEach(item => {
+            html += `
+                        <tr>
+                            <td>${item.username}</td>
+                            <td><span class="badge bg-warning">${item.count}</span></td>
+                        </tr>
+            `;
+        });
+        
+        html += `
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+    
+    // Recent Alerts
+    if (data.alerts && data.alerts.length > 0) {
+        html += `
+            <div class="mb-4">
+                <h6>Recent Alerts</h6>
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Alert Type</th>
+                            <th>Severity</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+        
+        data.alerts.slice(0, 20).forEach(alert => {
+            html += `
+                        <tr>
+                            <td><small>${new Date(alert.timestamp).toLocaleString()}</small></td>
+                            <td>${alert.alert_type}</td>
+                            <td>${getSeverityBadge(alert.severity)}</td>
+                            <td><small>${alert.description}</small></td>
+                        </tr>
+            `;
+        });
+        
+        html += `
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+    
+    content.innerHTML = html;
+}
+
+function getSeverityBadge(severity) {
+    const badges = {
+        'critical': '<span class="badge bg-danger">Critical</span>',
+        'high': '<span class="badge bg-warning">High</span>',
+        'medium': '<span class="badge bg-info">Medium</span>',
+        'low': '<span class="badge bg-secondary">Low</span>'
+    };
+    return badges[severity] || '<span class="badge bg-secondary">Unknown</span>';
+}
+
+function showIncidentReportModal() {
+    const modal = new bootstrap.Modal(document.getElementById('incidentReportModal'));
+    modal.show();
+}
+
+async function exportReport(format) {
+    if (!currentReportType) {
+        alert('Please generate a report first');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/reports/export/${format}?report_type=${currentReportType}`, {
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to export report');
+        }
+        
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${currentReportType}_report.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        
+    } catch (error) {
+        console.error('Error exporting report:', error);
+        alert('Failed to export report');
+    }
+}
+</script>
+{% endblock %}
