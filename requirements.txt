@@ -7,6 +7,12 @@ jinja2==3.1.3
 # Database
 sqlalchemy>=2.0.51
 
+# HTTP Requests (for log_uploader.py)
+requests>=2.31.0
+
+# Windows Event Log Processing (optional - for .evtx files)
+python-evtx>=0.7.4
+
 # Authentication & Security
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
